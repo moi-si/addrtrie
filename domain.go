@@ -1,78 +1,87 @@
 package addrtrie
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 )
 
-type lableNode[V any] struct {
-	children map[string]*lableNode[V]
-	value    *V
+type labelNode[T any] struct {
+	children map[string]*labelNode[T]
+	value    *T
 }
 
-type DomainMatcher[V any] struct {
-	exactDomains map[string]*V
-	root         *lableNode[V]
+type DomainMatcher[T any] struct {
+	exactDomains map[string]*T
+	root         *labelNode[T]
 }
 
-func NewDomainMatcher[V any]() *DomainMatcher[V] {
-	return &DomainMatcher[V]{
-		exactDomains: make(map[string]*V),
-		root:         &lableNode[V]{children: make(map[string]*lableNode[V])},
+func NewDomainMatcher[T any]() *DomainMatcher[T] {
+	return &DomainMatcher[T]{
+		exactDomains: make(map[string]*T),
+		root:         &labelNode[T]{children: make(map[string]*labelNode[T])},
 	}
 }
 
-func SplitAndReverse(domain string) []string {
-	parts := strings.Split(domain, ".")
-	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-		parts[i], parts[j] = parts[j], parts[i]
-	}
-	return parts
-}
-
-func (m *DomainMatcher[V]) insertTrie(domain string, value V) {
+func (m *DomainMatcher[T]) insertTrie(domain string, value *T) {
 	node := m.root
-	lables := SplitAndReverse(domain)
-	for _, lable := range lables {
-		if node.children[lable] == nil {
-			node.children[lable] = &lableNode[V]{children: make(map[string]*lableNode[V])}
+	i := len(domain) - 1
+	for i >= 0 {
+		j := strings.LastIndexByte(domain[:i+1], '.')
+		var label string
+		if j == -1 {
+			label = domain[:i+1]
+			i = -1
+		} else {
+			label = domain[j+1 : i+1]
+			i = j - 1
 		}
-		node = node.children[lable]
+
+		if node.children[label] == nil {
+			node.children[label] = &labelNode[T]{children: make(map[string]*labelNode[T])}
+		}
+		node = node.children[label]
 	}
-	node.value = &value
+	node.value = value
 }
 
-func (m *DomainMatcher[V]) Add(pattern string, value V) error {
+func (m *DomainMatcher[T]) Add(pattern string, value T) error {
 	if !strings.Contains(pattern, ".") {
-		return fmt.Errorf("invalid pattern: %s", pattern)
-	} else if strings.HasPrefix(pattern, "*.") {
-		m.insertTrie(pattern[2:], value)
-	} else if strings.HasPrefix(pattern, "*") {
-		domain := pattern[1:]
-		m.exactDomains[domain] = &value
-		m.insertTrie(domain, value)
-	} else {
+		return errors.New("invalid pattern: " + pattern)
+	}
+
+	switch {
+	case strings.HasPrefix(pattern, "*."):
+		m.insertTrie(pattern[2:], &value)
+	case strings.HasPrefix(pattern, "*"):
+		m.exactDomains[pattern[1:]] = &value
+		m.insertTrie(pattern[1:], &value)
+	default:
 		m.exactDomains[pattern] = &value
 	}
 	return nil
 }
 
-func (m *DomainMatcher[V]) Find(domain string) *V {
+func (m *DomainMatcher[T]) Find(domain string) *T {
 	if value, ok := m.exactDomains[domain]; ok {
 		return value
 	}
+
 	node := m.root
-	lables := SplitAndReverse(domain)
-	var value *V
-	for _, lable := range lables {
-		child, ok := node.children[lable]
+	var matched *T
+	for i := len(domain) - 1; ; {
+		j := strings.LastIndexByte(domain[:i+1], '.')
+		if j == -1 {
+			break
+		}
+		child, ok := node.children[domain[j+1:i+1]]
 		if !ok {
 			break
 		}
+		i = j - 1
 		node = child
 		if node.value != nil {
-			value = node.value
+			matched = node.value
 		}
 	}
-	return value
+	return matched
 }
