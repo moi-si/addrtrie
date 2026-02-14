@@ -85,6 +85,7 @@ func (m *DomainMatcher[T]) Find(domain string) (matched T, exists bool) {
 		i = j - 1
 		node = child
 		if !exists && node.valueExists {
+			matched = node.value
 			exists = true
 		}
 	}
