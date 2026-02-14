@@ -1,8 +1,8 @@
 package addrtrie
 
 import (
-	"net"
 	"encoding/binary"
+	"net"
 )
 
 func parseIPorCIDR(s string) (ip uint32, bitLen int, err error) {
@@ -31,8 +31,8 @@ func getBit(v uint32, i int) int {
 }
 
 type bitNode[T any] struct {
-	children [2]*bitNode[T]
-	value    T
+	children    [2]*bitNode[T]
+	value       T
 	valueExists bool
 }
 
@@ -63,6 +63,7 @@ func (t *BitTrie[T]) Insert(prefix string, value T) error {
 		cur = cur.children[b]
 	}
 	cur.value = value
+	cur.valueExists = true
 	return nil
 }
 

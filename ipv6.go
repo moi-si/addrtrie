@@ -87,6 +87,7 @@ func (t *BitTrie6[T]) Insert(prefix string, value T) error {
 		cur = cur.children[b]
 	}
 	cur.value = value
+	cur.valueExists = true
 	return nil
 }
 
