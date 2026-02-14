@@ -30,20 +30,25 @@ func getBit(v uint32, i int) int {
 	return int((v >> shift) & 1)
 }
 
-type bitNode[V any] struct {
-	children [2]*bitNode[V]
-	value    *V
+type bitNode[T any] struct {
+	children [2]*bitNode[T]
+	value    T
+	valueExists bool
 }
 
-type BitTrie[V any] struct {
-	root *bitNode[V]
+type BitTrie[T any] struct {
+	root *bitNode[T]
 }
 
-func NewBitTrie[V any]() *BitTrie[V] {
-	return &BitTrie[V]{root: &bitNode[V]{children: [2]*bitNode[V]{}}}
+func NewBitTrie[T any]() *BitTrie[T] {
+	return &BitTrie[T]{root: &bitNode[T]{children: [2]*bitNode[T]{}}}
 }
 
-func (t *BitTrie[V]) Insert(prefix string, value V) error {
+func (t *BitTrie[T]) Insert(prefix string, value T) error {
+	if prefix == "*" {
+		t.root.value = value
+		t.root.valueExists = true
+	}
 	ip, bitLen, err := parseIPorCIDR(prefix)
 	if err != nil {
 		return err
@@ -53,26 +58,26 @@ func (t *BitTrie[V]) Insert(prefix string, value V) error {
 	for i := range bitLen {
 		b := getBit(ip, i)
 		if cur.children[b] == nil {
-			cur.children[b] = &bitNode[V]{children: [2]*bitNode[V]{}}
+			cur.children[b] = &bitNode[T]{children: [2]*bitNode[T]{}}
 		}
 		cur = cur.children[b]
 	}
-	cur.value = &value
+	cur.value = value
 	return nil
 }
 
-func (t *BitTrie[V]) Find(ipStr string) *V {
+func (t *BitTrie[T]) Find(ipStr string) (matched T, exists bool) {
 	ip := net.ParseIP(ipStr).To4()
 	if ip == nil {
-		return nil
+		return
 	}
 	ipUint := binary.BigEndian.Uint32(ip)
 
-	var best *V
 	cur := t.root
 	for i := range 32 {
-		if cur.value != nil {
-			best = cur.value
+		if cur.valueExists {
+			matched = cur.value
+			exists = true
 		}
 		b := getBit(ipUint, i)
 		if cur.children[b] == nil {
@@ -80,8 +85,12 @@ func (t *BitTrie[V]) Find(ipStr string) *V {
 		}
 		cur = cur.children[b]
 	}
-	if cur.value != nil {
-		best = cur.value
+	if cur.valueExists {
+		matched = cur.value
+		exists = true
 	}
-	return best
+	if !exists && t.root.valueExists {
+		return t.root.value, t.root.valueExists
+	}
+	return
 }
