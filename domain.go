@@ -29,10 +29,10 @@ func (m *DomainMatcher[T]) insertPattern(pattern string, value T, isWildcard, is
 		j := strings.LastIndexByte(pattern[:i+1], '.')
 		var label string
 		if j == -1 {
-			label = strings.Clone(pattern[:i+1])
+			label = pattern[:i+1]
 			i = -1
 		} else {
-			label = strings.Clone(pattern[j+1 : i+1])
+			label = pattern[j+1 : i+1]
 			i = j - 1
 		}
 
