@@ -2,87 +2,81 @@ package addrtrie
 
 import (
 	"encoding/binary"
-	"errors"
 	"net"
+	"net/netip"
 )
 
-type ipv6Addr struct {
-	hi uint64 // high 64 bits
-	lo uint64 // low 64 bits
+type uint128 struct {
+	hi uint64
+	lo uint64
 }
 
-func newIPv6Addr(ip net.IP) ipv6Addr {
-	ip16 := ip.To16()
-	hi := binary.BigEndian.Uint64(ip16[0:8])
-	lo := binary.BigEndian.Uint64(ip16[8:16])
-	return ipv6Addr{hi: hi, lo: lo}
-}
-
-func (a ipv6Addr) getBit(i int) int {
+func getBit128(v uint128, i int) uint64 {
 	if i < 64 {
-		shift := 63 - i
-		return int((a.hi >> shift) & 1)
+		return (v.hi >> (63 - i)) & 1
 	}
-	shift := 63 - (i - 64)
-	return int((a.lo >> shift) & 1)
+	return (v.lo >> (63 - (i - 64))) & 1
 }
 
-func parseIPorCIDRIPv6(s string) (ipv6Addr, int, error) {
-	if ip, ipNet, err := net.ParseCIDR(s); err == nil {
-		ip = ip.To16()
-		if ip == nil || ip.To4() != nil {
-			return ipv6Addr{}, 0, net.InvalidAddrError("non-IPv6 CIDR")
+func parseIPv6OrCIDR(s string) (ip uint128, bitLen int, err error) {
+	prefix, err := netip.ParsePrefix(s)
+	if err == nil {
+		addr := prefix.Addr().Unmap()
+		if addr.Is4() {
+			return uint128{}, 0, net.InvalidAddrError("non-IPv6 mask")
 		}
-		ones, bits := ipNet.Mask.Size()
-		if bits != 128 {
-			return ipv6Addr{}, 0, net.InvalidAddrError("non-IPv6 mask")
+
+		b := addr.As16()
+		ip.hi = binary.BigEndian.Uint64(b[:8])
+		ip.lo = binary.BigEndian.Uint64(b[8:16])
+		bitLen = prefix.Bits()
+
+		if bitLen < 0 || bitLen > 128 {
+			return uint128{}, 0, net.InvalidAddrError("non-canonical mask")
 		}
-		if ones == 0 && bits == 0 {
-			return ipv6Addr{}, 0, net.InvalidAddrError("non-canonical mask")
-		}
-		return newIPv6Addr(ip), ones, nil
+		return ip, bitLen, nil
 	}
 
-	ip := net.ParseIP(s).To16()
-	if ip == nil || ip.To4() != nil {
-		return ipv6Addr{}, 0, net.InvalidAddrError("invalid IPv6 address")
+	addr, err := netip.ParseAddr(s)
+	if err == nil {
+		addr = addr.Unmap()
+		if addr.Is4() {
+			return uint128{}, 0, net.InvalidAddrError("invalid IPv6 address")
+		}
+
+		b := addr.As16()
+		ip.hi = binary.BigEndian.Uint64(b[:8])
+		ip.lo = binary.BigEndian.Uint64(b[8:16])
+		return ip, 128, nil
 	}
-	return newIPv6Addr(ip), 128, nil
+
+	return uint128{}, 0, net.InvalidAddrError("invalid IPv6 address or CIDR")
 }
 
-type bitNode6[T any] struct {
-	children    [2]*bitNode6[T]
-	value       T
-	valueExists bool
+type IPv6Trie[T any] struct {
+	root *bitNode[T]
 }
 
-type BitTrie6[T any] struct {
-	root *bitNode6[T]
+func NewIPv6Trie[T any]() *IPv6Trie[T] {
+	return &IPv6Trie[T]{root: &bitNode[T]{}}
 }
 
-func NewBitTrie6[T any]() *BitTrie6[T] {
-	return &BitTrie6[T]{root: &bitNode6[T]{}}
-}
-
-func (t *BitTrie6[T]) Insert(prefix string, value T) error {
+func (t *IPv6Trie[T]) Insert(prefix string, value T) error {
 	if prefix == "*" {
 		t.root.value = value
 		t.root.valueExists = true
 		return nil
 	}
-	addr, bitLen, err := parseIPorCIDRIPv6(prefix)
+	ip, bitLen, err := parseIPv6OrCIDR(prefix)
 	if err != nil {
 		return err
-	}
-	if bitLen < 0 || bitLen > 128 {
-		return errors.New("invalid prefix length")
 	}
 
 	cur := t.root
 	for i := range bitLen {
-		b := addr.getBit(i)
+		b := getBit128(ip, i)
 		if cur.children[b] == nil {
-			cur.children[b] = &bitNode6[T]{}
+			cur.children[b] = &bitNode[T]{}
 		}
 		cur = cur.children[b]
 	}
@@ -91,12 +85,22 @@ func (t *BitTrie6[T]) Insert(prefix string, value T) error {
 	return nil
 }
 
-func (t *BitTrie6[T]) Find(ipStr string) (matched T, exists bool) {
-	ip := net.ParseIP(ipStr).To16()
-	if ip == nil || ip.To4() != nil {
+func (t *IPv6Trie[T]) Find(ipStr string) (matched T, exists bool) {
+	addr, err := netip.ParseAddr(ipStr)
+	if err != nil {
 		return
 	}
-	addr := newIPv6Addr(ip)
+
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return
+	}
+
+	b := addr.As16()
+	ipUint := uint128{
+		hi: binary.BigEndian.Uint64(b[:8]),
+		lo: binary.BigEndian.Uint64(b[8:16]),
+	}
 
 	cur := t.root
 	for i := range 128 {
@@ -104,7 +108,7 @@ func (t *BitTrie6[T]) Find(ipStr string) (matched T, exists bool) {
 			matched = cur.value
 			exists = true
 		}
-		b := addr.getBit(i)
+		b := getBit128(ipUint, i)
 		if cur.children[b] == nil {
 			break
 		}
@@ -115,7 +119,7 @@ func (t *BitTrie6[T]) Find(ipStr string) (matched T, exists bool) {
 		exists = true
 	}
 	if !exists && t.root.valueExists {
-		return t.root.value, true
+		return t.root.value, t.root.valueExists
 	}
 	return
 }
